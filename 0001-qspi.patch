@@ -1,0 +1,1037 @@
+From 868be7ebe8bd7cec68ed5bcbbe005e3393298837 Mon Sep 17 00:00:00 2001
+From: Wentong LI <wentong.li@nordicsemi.no>
+Date: Tue, 14 Nov 2023 14:33:23 +0800
+Subject: [PATCH] qspi
+
+---
+ boards/shields/nrf7002ek/nrf7002ek.overlay |   2 +-
+ drivers/wifi/nrf700x/CMakeLists.txt        |  21 +-
+ drivers/wifi/nrf700x/Kconfig               |  12 +-
+ drivers/wifi/nrf700x/src/shim.c            |  95 +--
+ drivers/wifi/nrf700x/src/stm32_qspi.c      | 703 +++++++++++++++++++++
+ drivers/wifi/nrf700x/src/stm32_qspi.h      |  12 +
+ west.yml                                   |   1 +
+ 7 files changed, 786 insertions(+), 60 deletions(-)
+ create mode 100644 drivers/wifi/nrf700x/src/stm32_qspi.c
+ create mode 100644 drivers/wifi/nrf700x/src/stm32_qspi.h
+
+diff --git a/boards/shields/nrf7002ek/nrf7002ek.overlay b/boards/shields/nrf7002ek/nrf7002ek.overlay
+index f1de896fb..ce6db611b 100644
+--- a/boards/shields/nrf7002ek/nrf7002ek.overlay
++++ b/boards/shields/nrf7002ek/nrf7002ek.overlay
+@@ -5,7 +5,7 @@
+ #include <freq.h>
+ #include "nrf7002ek_coex.overlay"
+ 
+-&arduino_spi {
++&spi1 {
+ 	status = "okay";
+ 
+ 	nrf700x: nrf7002@0 {
+diff --git a/drivers/wifi/nrf700x/CMakeLists.txt b/drivers/wifi/nrf700x/CMakeLists.txt
+index 34acece91..d8492bbc0 100644
+--- a/drivers/wifi/nrf700x/CMakeLists.txt
++++ b/drivers/wifi/nrf700x/CMakeLists.txt
+@@ -17,7 +17,7 @@ zephyr_include_directories(
+ 	${OS_AGNOSTIC_BASE}/fw_if/umac_if/inc
+ 	${OS_AGNOSTIC_BASE}/fw_load/mips/fw/inc
+ 	${OS_AGNOSTIC_BASE}/hw_if/hal/inc
+-	src/qspi/inc
++	# src/qspi/inc
+ 	# for net_sprint_ll_addr
+ 	${ZEPHYR_BASE}/subsys/net/ip
+ 	${OS_AGNOSTIC_BASE}/hw_if/hal/inc/fw
+@@ -58,9 +58,10 @@ zephyr_library_sources(
+ 	src/timer.c
+ 	src/fmac_main.c
+ 	src/fw_load.c
+-	src/qspi/src/device.c
+-	src/qspi/src/rpu_hw_if.c
+-	src/qspi/src/ficr_prog.c
++	src/stm32_qspi.c
++	# src/qspi/src/device.c
++	# src/qspi/src/rpu_hw_if.c
++	# src/qspi/src/ficr_prog.c
+ )
+ 
+ zephyr_library_sources_ifndef(CONFIG_NRF700X_RADIO_TEST
+@@ -104,13 +105,13 @@ zephyr_library_sources_ifdef(CONFIG_NRF700X_STA_MODE
+ 	${OS_AGNOSTIC_BASE}/fw_if/umac_if/src/fmac_util.c
+ )
+ 
+-zephyr_library_sources_ifdef(CONFIG_NRF700X_ON_QSPI
+-	src/qspi/src/qspi_if.c
+-)
++# zephyr_library_sources_ifdef(CONFIG_NRF700X_ON_QSPI
++# 	src/qspi/src/qspi_if.c
++# )
+ 
+-zephyr_library_sources_ifdef(CONFIG_NRF700X_ON_SPI
+-	src/qspi/src/spi_if.c
+-)
++# zephyr_library_sources_ifdef(CONFIG_NRF700X_ON_SPI
++# 	src/qspi/src/spi_if.c
++# )
+ 
+ zephyr_library_sources_ifdef(CONFIG_NRF700X_UTIL
+ 	src/wifi_util.c
+diff --git a/drivers/wifi/nrf700x/Kconfig b/drivers/wifi/nrf700x/Kconfig
+index 8a5dbc899..97709346f 100644
+--- a/drivers/wifi/nrf700x/Kconfig
++++ b/drivers/wifi/nrf700x/Kconfig
+@@ -133,13 +133,13 @@ config WIFI_NRF700X_LOG_LEVEL
+ 	# Enable error by default
+ 	default 1
+ 
+-config NRF700X_ON_QSPI
+-	def_bool $(dt_compat_enabled,$(DT_COMPAT_NORDIC_NRF700X_QSPI))
+-	select NRFX_QSPI
++# config NRF700X_ON_QSPI
++# 	def_bool $(dt_compat_enabled,$(DT_COMPAT_NORDIC_NRF700X_QSPI))
++# 	select NRFX_QSPI
+ 
+-config NRF700X_ON_SPI
+-	def_bool $(dt_compat_enabled,$(DT_COMPAT_NORDIC_NRF700X_SPI))
+-	select SPI
++# config NRF700X_ON_SPI
++# 	def_bool $(dt_compat_enabled,$(DT_COMPAT_NORDIC_NRF700X_SPI))
++# 	select SPI
+ 
+ # RF switch based coexistence
+ config NRF700X_RADIO_COEX
+diff --git a/drivers/wifi/nrf700x/src/shim.c b/drivers/wifi/nrf700x/src/shim.c
+index 482c5d7d4..1ea9bc3ab 100644
+--- a/drivers/wifi/nrf700x/src/shim.c
++++ b/drivers/wifi/nrf700x/src/shim.c
+@@ -19,12 +19,13 @@
+ #include <zephyr/logging/log.h>
+ #include <zephyr/sys/__assert.h>
+ 
+-#include "rpu_hw_if.h"
++// #include "rpu_hw_if.h"
+ #include "shim.h"
+ #include "work.h"
+ #include "timer.h"
+ #include "osal_ops.h"
+-#include "qspi_if.h"
++// #include "qspi_if.h"
++#include "stm32_qspi.h"
+ 
+ LOG_MODULE_REGISTER(wifi_nrf, CONFIG_WIFI_NRF700X_LOG_LEVEL);
+ 
+@@ -63,14 +64,20 @@ static unsigned int zep_shim_qspi_read_reg32(void *priv, unsigned long addr)
+ {
+ 	unsigned int val;
+ 	struct zep_shim_bus_qspi_priv *qspi_priv = priv;
+-	struct qspi_dev *dev;
++	// struct qspi_dev *dev;
+ 
+-	dev = qspi_priv->qspi_dev;
++	// dev = qspi_priv->qspi_dev;
++
++	// if (addr < 0x0C0000) {
++	// 	dev->hl_read(addr, &val, 4);
++	// } else {
++	// 	dev->read(addr, &val, 4);
++	// }
+ 
+ 	if (addr < 0x0C0000) {
+-		dev->hl_read(addr, &val, 4);
++		stm32_qspi_read_hl(addr, &val, 4);
+ 	} else {
+-		dev->read(addr, &val, 4);
++		stm32_qspi_read(addr, &val, 4);
+ 	}
+ 
+ 	return val;
+@@ -79,43 +86,51 @@ static unsigned int zep_shim_qspi_read_reg32(void *priv, unsigned long addr)
+ static void zep_shim_qspi_write_reg32(void *priv, unsigned long addr, unsigned int val)
+ {
+ 	struct zep_shim_bus_qspi_priv *qspi_priv = priv;
+-	struct qspi_dev *dev;
++	// struct qspi_dev *dev;
+ 
+-	dev = qspi_priv->qspi_dev;
++	// dev = qspi_priv->qspi_dev;
+ 
+-	dev->write(addr, &val, 4);
++	// dev->write(addr, &val, 4);
++	stm32_qspi_write(addr, &val, 4);
+ }
+ 
+ static void zep_shim_qspi_cpy_from(void *priv, void *dest, unsigned long addr, size_t count)
+ {
+ 	struct zep_shim_bus_qspi_priv *qspi_priv = priv;
+-	struct qspi_dev *dev;
++	// struct qspi_dev *dev;
+ 
+-	dev = qspi_priv->qspi_dev;
++	// dev = qspi_priv->qspi_dev;
+ 
+ 	if (count % 4 != 0) {
+ 		count = (count + 4) & 0xfffffffc;
+ 	}
+ 
++	// if (addr < 0x0C0000) {
++	// 	dev->hl_read(addr, dest, count);
++	// } else {
++	// 	dev->read(addr, dest, count);
++	// }
++
+ 	if (addr < 0x0C0000) {
+-		dev->hl_read(addr, dest, count);
++		stm32_qspi_read_hl(addr, dest, count);
+ 	} else {
+-		dev->read(addr, dest, count);
++		stm32_qspi_read(addr, dest, count);
+ 	}
+ }
+ 
+ static void zep_shim_qspi_cpy_to(void *priv, unsigned long addr, const void *src, size_t count)
+ {
+ 	struct zep_shim_bus_qspi_priv *qspi_priv = priv;
+-	struct qspi_dev *dev;
++	// struct qspi_dev *dev;
+ 
+-	dev = qspi_priv->qspi_dev;
++	// dev = qspi_priv->qspi_dev;
+ 
+ 	if (count % 4 != 0) {
+ 		count = (count + 4) & 0xfffffffc;
+ 	}
+ 
+-	dev->write(addr, src, count);
++	// dev->write(addr, src, count);
++	stm32_qspi_write(addr, src, count);
+ }
+ 
+ static void *zep_shim_spinlock_alloc(void)
+@@ -568,28 +583,21 @@ static void zep_shim_bus_qspi_dev_deinit(void *os_qspi_dev_ctx)
+ 
+ 	dev = os_qspi_dev_ctx;
+ 
+-	dev->deinit();
++	// dev->deinit();
+ }
+ 
+ static void *zep_shim_bus_qspi_dev_add(void *os_qspi_priv, void *osal_qspi_dev_ctx)
+ {
+-	struct zep_shim_bus_qspi_priv *zep_qspi_priv = os_qspi_priv;
+-	struct qspi_dev *qdev = qspi_dev();
+-	int ret;
+-	enum nrf_wifi_status status;
++	struct zep_shim_bus_qspi_priv *zep_qspi_priv = NULL;
++	// struct qspi_dev *qdev = NULL;
+ 
+-	status = qdev->init(qspi_defconfig());
+-	if (status != NRF_WIFI_STATUS_SUCCESS) {
+-		LOG_ERR("%s: QSPI device init failed", __func__);
+-		return NULL;
+-	}
++	zep_qspi_priv = os_qspi_priv;
+ 
+-	ret = rpu_enable();
+-	if (ret) {
+-		LOG_ERR("%s: RPU enable failed with error %d", __func__, ret);
+-		return NULL;
+-	}
+-	zep_qspi_priv->qspi_dev = qdev;
++	// rpu_enable();
++	stm32_qspi_init();
++	// qdev = qspi_dev();
++
++	// zep_qspi_priv->qspi_dev = qdev;
+ 	zep_qspi_priv->dev_added = true;
+ 
+ 	return zep_qspi_priv;
+@@ -597,12 +605,12 @@ static void *zep_shim_bus_qspi_dev_add(void *os_qspi_priv, void *osal_qspi_dev_c
+ 
+ static void zep_shim_bus_qspi_dev_rem(void *os_qspi_dev_ctx)
+ {
+-	struct qspi_dev *dev = NULL;
++	// struct qspi_dev *dev = NULL;
+ 
+-	dev = os_qspi_dev_ctx;
++	// dev = os_qspi_dev_ctx;
+ 
+ 	/* TODO: Make qspi_dev a dynamic instance and remove it here */
+-	rpu_disable();
++	// rpu_disable();
+ }
+ 
+ static void *zep_shim_bus_qspi_init(void)
+@@ -702,14 +710,15 @@ static enum nrf_wifi_status zep_shim_bus_qspi_intr_reg(void *os_dev_ctx, void *c
+ 
+ 	k_work_init_delayable(&intr_priv->work, irq_work_handler);
+ 
+-	ret = rpu_irq_config(&intr_priv->gpio_cb_data, zep_shim_irq_handler);
++	// ret = rpu_irq_config(&intr_priv->gpio_cb_data, zep_shim_irq_handler);
+ 
+-	if (ret) {
+-		LOG_ERR("%s: request_irq failed", __func__);
+-		k_free(intr_priv);
+-		intr_priv = NULL;
+-		goto out;
+-	}
++	// if (ret) {
++	// 	LOG_ERR("%s: request_irq failed\n", __func__);
++	// 	k_free(intr_priv);
++	// 	intr_priv = NULL;
++	// 	goto out;
++	// }
++	stm32_qspi_add_isr(&intr_priv->gpio_cb_data, zep_shim_irq_handler);
+ 
+ 	status = NRF_WIFI_STATUS_SUCCESS;
+ 
+@@ -723,7 +732,7 @@ static void zep_shim_bus_qspi_intr_unreg(void *os_qspi_dev_ctx)
+ 
+ 	k_work_cancel_delayable(&intr_priv->work);
+ 
+-	rpu_irq_remove(&intr_priv->gpio_cb_data);
++	// rpu_irq_remove(&intr_priv->gpio_cb_data);
+ 
+ 	k_free(intr_priv);
+ 	intr_priv = NULL;
+diff --git a/drivers/wifi/nrf700x/src/stm32_qspi.c b/drivers/wifi/nrf700x/src/stm32_qspi.c
+new file mode 100644
+index 000000000..57956cf27
+--- /dev/null
++++ b/drivers/wifi/nrf700x/src/stm32_qspi.c
+@@ -0,0 +1,703 @@
++#include "stm32_qspi.h"
++#include <zephyr/kernel.h>
++#include <zephyr/drivers/gpio.h>
++#include <stm32h7a3xxq.h>
++#include <stm32h7xx_hal.h>
++#include <stm32h7xx_hal_rcc.h>
++#include <stm32h7xx_hal_ospi.h>
++#include <stm32h7xx_hal_gpio.h>
++#include <stm32h7xx_hal_mdma.h>
++#include <string.h>
++
++#define OP_ON_QSPI
++
++K_SEM_DEFINE(sync, 0, 1);
++K_SEM_DEFINE(sem, 1, 1);
++static MDMA_HandleTypeDef hmdma_octospi1_fifo_th;
++static OSPI_HandleTypeDef hospi1;
++
++void mdma_isr(void *data)
++{
++	// printk("DMA ISR!\n");
++	HAL_MDMA_IRQHandler(&hmdma_octospi1_fifo_th);
++
++	return;
++}
++
++void ospi1_isr(void *data)
++{
++	// printk("OSPI ISR %d!\n", hospi1.Instance->SR);
++	HAL_OSPI_IRQHandler(&hospi1);
++
++	return;
++}
++
++/*
++ * Rx Transfer completed callback.
++ */
++void HAL_OSPI_RxCpltCallback(OSPI_HandleTypeDef *hospi)
++{
++
++	k_sem_give(&sync);
++}
++
++/*
++ * Tx Transfer completed callback.
++ */
++void HAL_OSPI_TxCpltCallback(OSPI_HandleTypeDef *hospi)
++{
++
++
++	k_sem_give(&sync);
++}
++
++void stm32_qspi_add_isr(struct gpio_callback *irq_callback_data, void (*irq_handler)())
++{
++	int ret;
++
++	const struct device *gpio_g = DEVICE_DT_GET(DT_NODELABEL(gpiog));
++	gpio_pin_configure(gpio_g, 12, GPIO_INPUT);
++
++	ret = gpio_pin_interrupt_configure(gpio_g, 12, GPIO_INT_EDGE_TO_ACTIVE);
++
++	gpio_init_callback(irq_callback_data,
++			irq_handler,
++			BIT(12));
++
++	gpio_add_callback(gpio_g, irq_callback_data);
++
++	printk("Finished Interrupt config\n\n");
++
++	return;
++}
++
++void stm32_qspi_init(void)
++{
++	k_sem_take(&sem, K_FOREVER);
++
++	int ret;
++
++	__HAL_RCC_OSPI1_CLK_ENABLE();
++	__HAL_RCC_OCTOSPIM_CLK_ENABLE();
++
++	__HAL_RCC_GPIOE_CLK_ENABLE();
++	__HAL_RCC_GPIOD_CLK_ENABLE();
++	__HAL_RCC_GPIOB_CLK_ENABLE();
++	__HAL_RCC_GPIOB_CLK_ENABLE();
++	__HAL_RCC_GPIOG_CLK_ENABLE();
++	__HAL_RCC_MDMA_CLK_ENABLE();
++	k_msleep(1);
++
++	const struct device *gpio_b = DEVICE_DT_GET(DT_NODELABEL(gpiob));
++	gpio_pin_configure(gpio_b, 6, GPIO_OUTPUT_ACTIVE);
++	gpio_pin_set(gpio_b, 6, 0);
++
++	gpio_pin_configure(gpio_b, 7, GPIO_OUTPUT_ACTIVE);
++	gpio_pin_set(gpio_b, 7, 0);
++	k_msleep(100);
++
++	ret = gpio_pin_set(gpio_b, 6, 1);
++	if (ret < 0) {
++		return;
++	}
++
++	k_msleep(1);
++	ret = gpio_pin_set(gpio_b, 7, 1);
++	if (ret < 0) {
++		return;
++	}
++	k_msleep(1);
++
++
++
++
++
++	GPIO_InitTypeDef GPIO_InitStruct = {0};
++
++
++	GPIO_InitStruct.Pin = GPIO_PIN_2;
++	GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
++	GPIO_InitStruct.Pull = GPIO_NOPULL;
++	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
++	GPIO_InitStruct.Alternate = GPIO_AF9_OCTOSPIM_P1;
++	HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
++
++	GPIO_InitStruct.Pin = GPIO_PIN_11|GPIO_PIN_12|GPIO_PIN_13;
++	GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
++	GPIO_InitStruct.Pull = GPIO_NOPULL;
++	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
++	GPIO_InitStruct.Alternate = GPIO_AF9_OCTOSPIM_P1;
++	HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
++
++	GPIO_InitStruct.Pin = GPIO_PIN_2;
++	GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
++	GPIO_InitStruct.Pull = GPIO_NOPULL;
++	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
++	GPIO_InitStruct.Alternate = GPIO_AF9_OCTOSPIM_P1;
++	HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
++
++
++	GPIO_InitStruct.Pin = GPIO_PIN_6;
++	GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
++	GPIO_InitStruct.Pull = GPIO_NOPULL;
++	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
++	GPIO_InitStruct.Alternate = GPIO_AF10_OCTOSPIM_P1;
++	HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
++
++
++
++
++
++	OSPIM_CfgTypeDef sOspiManagerCfg = {0};
++
++	/* USER CODE BEGIN OCTOSPI1_Init 1 */
++
++	/* USER CODE END OCTOSPI1_Init 1 */
++	/* OCTOSPI1 parameter configuration*/
++	hospi1.Instance = OCTOSPI1;
++	hospi1.Init.FifoThreshold = 4;
++	hospi1.Init.DualQuad = HAL_OSPI_DUALQUAD_DISABLE;
++	hospi1.Init.MemoryType = HAL_OSPI_MEMTYPE_MICRON;
++	hospi1.Init.DeviceSize = 24;
++	hospi1.Init.ChipSelectHighTime = 10;
++	hospi1.Init.FreeRunningClock = HAL_OSPI_FREERUNCLK_DISABLE;
++	hospi1.Init.ClockMode = HAL_OSPI_CLOCK_MODE_0;
++	hospi1.Init.WrapSize = HAL_OSPI_WRAP_NOT_SUPPORTED;
++	hospi1.Init.ClockPrescaler = 8;
++	hospi1.Init.SampleShifting = HAL_OSPI_SAMPLE_SHIFTING_NONE;
++	hospi1.Init.DelayHoldQuarterCycle = HAL_OSPI_DHQC_DISABLE;
++	hospi1.Init.ChipSelectBoundary = 0;
++	hospi1.Init.DelayBlockBypass = HAL_OSPI_DELAY_BLOCK_BYPASSED;
++	hospi1.Init.MaxTran = 0;
++	hospi1.Init.Refresh = 0;
++	if (HAL_OSPI_Init(&hospi1) != HAL_OK)
++	{
++		printk("error\n");
++	}
++	sOspiManagerCfg.ClkPort = 1;
++	sOspiManagerCfg.NCSPort = 1;
++	sOspiManagerCfg.IOLowPort = HAL_OSPIM_IOPORT_1_LOW;
++	if (HAL_OSPIM_Config(&hospi1, &sOspiManagerCfg, HAL_OSPI_TIMEOUT_DEFAULT_VALUE) != HAL_OK)
++	{
++		printk("error!");
++	}
++
++	hmdma_octospi1_fifo_th.Instance = MDMA_Channel15;
++	hmdma_octospi1_fifo_th.Init.Request = MDMA_REQUEST_OCTOSPI1_FIFO_TH;
++	hmdma_octospi1_fifo_th.Init.TransferTriggerMode = MDMA_BUFFER_TRANSFER;
++	hmdma_octospi1_fifo_th.Init.Priority = MDMA_PRIORITY_HIGH;
++	hmdma_octospi1_fifo_th.Init.Endianness = MDMA_LITTLE_ENDIANNESS_PRESERVE;
++	hmdma_octospi1_fifo_th.Init.SourceInc = MDMA_SRC_INC_BYTE;
++	hmdma_octospi1_fifo_th.Init.DestinationInc = MDMA_DEST_INC_BYTE;
++	hmdma_octospi1_fifo_th.Init.SourceDataSize = MDMA_SRC_DATASIZE_BYTE;
++	hmdma_octospi1_fifo_th.Init.DestDataSize = MDMA_SRC_DATASIZE_BYTE;
++	hmdma_octospi1_fifo_th.Init.DataAlignment = MDMA_DATAALIGN_PACKENABLE;
++	hmdma_octospi1_fifo_th.Init.BufferTransferLength = 1;
++	hmdma_octospi1_fifo_th.Init.SourceBurst = MDMA_SOURCE_BURST_SINGLE;
++	hmdma_octospi1_fifo_th.Init.DestBurst = MDMA_DEST_BURST_SINGLE;
++	hmdma_octospi1_fifo_th.Init.SourceBlockAddressOffset = 0;
++	hmdma_octospi1_fifo_th.Init.DestBlockAddressOffset = 0;
++	if (HAL_MDMA_Init(&hmdma_octospi1_fifo_th) != HAL_OK)
++	{
++		printk("cannot init DMA\n");
++	}
++
++	if (HAL_MDMA_ConfigPostRequestMask(&hmdma_octospi1_fifo_th, 0, 0) != HAL_OK)
++	{
++		printk("cannot init DMA\n");
++	}
++
++	__HAL_LINKDMA(&hospi1,hmdma,hmdma_octospi1_fifo_th);
++
++	IRQ_CONNECT(MDMA_IRQn, 5, mdma_isr, NULL, 0);
++	irq_enable(MDMA_IRQn);
++	IRQ_CONNECT(OCTOSPI1_IRQn, 5, ospi1_isr, NULL, 0);
++	irq_enable(OCTOSPI1_IRQn);
++
++	static OSPI_RegularCmdTypeDef cmd;
++	uint8_t data = 0;
++	//check QE set or not
++	cmd = (OSPI_RegularCmdTypeDef){
++
++		.OperationType = HAL_OSPI_OPTYPE_COMMON_CFG,
++		.FlashId = HAL_OSPI_FLASH_ID_1,
++		.AlternateBytesMode = HAL_OSPI_ALTERNATE_BYTES_NONE,
++
++		.Instruction = 0x05,
++		.InstructionSize = HAL_OSPI_INSTRUCTION_8_BITS,
++		.InstructionMode =HAL_OSPI_INSTRUCTION_1_LINE,
++
++		.Address = 0,
++		.AddressMode = HAL_OSPI_ADDRESS_NONE,
++
++		.DataMode = HAL_OSPI_DATA_1_LINE,
++		.DummyCycles = 0U,
++		.DQSMode = HAL_OSPI_DQS_DISABLE,
++		.SIOOMode = HAL_OSPI_SIOO_INST_EVERY_CMD,
++
++		.NbData = 1,
++
++	};
++
++	ret = HAL_OSPI_Command(&hospi1, &cmd, 0xFFFF);
++	if (ret) {
++		printk("QSPI COMMAND %d, error code %d\n", ret, hospi1.ErrorCode);
++	}
++
++
++	ret = HAL_OSPI_Receive(&hospi1, &data, 0xFFFF);
++	if (ret) {
++		printk("QSPI RX %d, error code %d, data %d\n", ret, hospi1.ErrorCode, data);
++	}
++
++
++	//wrsr 2
++	cmd = (OSPI_RegularCmdTypeDef){
++
++		.OperationType = HAL_OSPI_OPTYPE_COMMON_CFG,
++		.FlashId = HAL_OSPI_FLASH_ID_1,
++		.AlternateBytesMode = HAL_OSPI_ALTERNATE_BYTES_NONE,
++
++		.Instruction = 0x3f,
++		.InstructionSize = HAL_OSPI_INSTRUCTION_8_BITS,
++		.InstructionMode =HAL_OSPI_INSTRUCTION_1_LINE,
++
++		.Address = 0,
++		.AddressMode = HAL_OSPI_ADDRESS_NONE,
++
++		.DataMode = HAL_OSPI_DATA_1_LINE,
++		.DummyCycles = 0U,
++		.DQSMode = HAL_OSPI_DQS_DISABLE,
++		.SIOOMode = HAL_OSPI_SIOO_INST_EVERY_CMD,
++
++		.NbData = 1,
++
++	};
++
++	ret = HAL_OSPI_Command(&hospi1, &cmd, 0xFFFF);
++	if (ret) {
++		printk("QSPI COMMAND %d, error code %d\n", ret, hospi1.ErrorCode);
++	}
++
++
++	data = 0x1;
++	ret = HAL_OSPI_Transmit(&hospi1, &data, 0xFFFF);
++	if (ret) {
++		printk("QSPI TX %d, error code %d, data %d\n", ret, hospi1.ErrorCode, data);
++	}
++
++	k_msleep(10);
++
++	//rdsr2
++	data = 0;
++
++	do {
++
++		cmd = (OSPI_RegularCmdTypeDef){
++
++			.OperationType = HAL_OSPI_OPTYPE_COMMON_CFG,
++			.FlashId = HAL_OSPI_FLASH_ID_1,
++			.AlternateBytesMode = HAL_OSPI_ALTERNATE_BYTES_NONE,
++
++			.Instruction = 0x2f,
++			.InstructionSize = HAL_OSPI_INSTRUCTION_8_BITS,
++			.InstructionMode =HAL_OSPI_INSTRUCTION_1_LINE,
++
++			.Address = 0,
++			.AddressMode = HAL_OSPI_ADDRESS_NONE,
++
++			.DataMode = HAL_OSPI_DATA_1_LINE,
++			.DummyCycles = 0U,
++			.DQSMode = HAL_OSPI_DQS_DISABLE,
++			.SIOOMode = HAL_OSPI_SIOO_INST_EVERY_CMD,
++
++			.NbData = 1,
++
++		};
++
++		ret = HAL_OSPI_Command(&hospi1, &cmd, 0xFFFF);
++		if (ret) {
++			printk("QSPI COMMAND %d, error code %d\n", ret, hospi1.ErrorCode);
++		}
++
++		ret = HAL_OSPI_Receive(&hospi1, &data, 0xFFFF);
++		if (ret) {
++			printk("QSPI RX %d, error code %d, data %d\n", ret, hospi1.ErrorCode, data);
++		}
++		k_msleep(10);
++	} while (data != 1);
++
++	//rdsr1
++	data = 0;
++
++	do {
++
++		cmd = (OSPI_RegularCmdTypeDef){
++
++			.OperationType = HAL_OSPI_OPTYPE_COMMON_CFG,
++			.FlashId = HAL_OSPI_FLASH_ID_1,
++			.AlternateBytesMode = HAL_OSPI_ALTERNATE_BYTES_NONE,
++
++			.Instruction = 0x1f,
++			.InstructionSize = HAL_OSPI_INSTRUCTION_8_BITS,
++			.InstructionMode =HAL_OSPI_INSTRUCTION_1_LINE,
++
++			.Address = 0,
++			.AddressMode = HAL_OSPI_ADDRESS_NONE,
++
++			.DataMode = HAL_OSPI_DATA_1_LINE,
++			.DummyCycles = 0U,
++			.DQSMode = HAL_OSPI_DQS_DISABLE,
++			.SIOOMode = HAL_OSPI_SIOO_INST_EVERY_CMD,
++
++			.NbData = 1,
++
++		};
++
++
++		ret = HAL_OSPI_Command(&hospi1, &cmd, 0xFFFF);
++
++		if (ret) {
++			printk("QSPI COMMAND %d, error code %d\n", ret, hospi1.ErrorCode);
++		}
++
++		ret = HAL_OSPI_Receive(&hospi1, &data, 0xFFFF);
++		if (ret) {
++			printk("QSPI RX %d, error code %d, data %d\n", ret, hospi1.ErrorCode, data);
++		}
++
++		k_msleep(10);
++	} while (data != (1 << 1));
++
++	//write clock
++	uint32_t reg_val = 0x100;
++
++	cmd = (OSPI_RegularCmdTypeDef){
++
++		.OperationType = HAL_OSPI_OPTYPE_COMMON_CFG,
++		.FlashId = HAL_OSPI_FLASH_ID_1,
++		.AlternateBytesMode = HAL_OSPI_ALTERNATE_BYTES_NONE,
++
++		.Instruction = 0x38,
++		.InstructionSize = HAL_OSPI_INSTRUCTION_8_BITS,
++		.InstructionMode =HAL_OSPI_INSTRUCTION_1_LINE,
++
++		.Address = 0x048c20,
++		.AddressMode = HAL_OSPI_ADDRESS_4_LINES,
++		.AddressSize = HAL_OSPI_ADDRESS_24_BITS,
++
++		.DataMode = HAL_OSPI_DATA_4_LINES,
++		.DummyCycles = 0U,
++		.DQSMode = HAL_OSPI_DQS_DISABLE,
++		.SIOOMode = HAL_OSPI_SIOO_INST_EVERY_CMD,
++
++		.NbData = 4,
++
++	};
++	// cmd = (OSPI_RegularCmdTypeDef){
++
++	// 	.OperationType = HAL_OSPI_OPTYPE_COMMON_CFG,
++	// 	.FlashId = HAL_OSPI_FLASH_ID_1,
++	// 	.AlternateBytesMode = HAL_OSPI_ALTERNATE_BYTES_NONE,
++
++	// 	.Instruction = 0x02,
++	// 	.InstructionSize = HAL_OSPI_INSTRUCTION_8_BITS,
++	// 	.InstructionMode =HAL_OSPI_INSTRUCTION_1_LINE,
++
++	// 	.Address = 0x048c20,
++	// 	.AddressMode = HAL_OSPI_ADDRESS_1_LINE,
++	// 	.AddressSize = HAL_OSPI_ADDRESS_24_BITS,
++
++	// 	.DataMode = HAL_OSPI_DATA_1_LINE,
++	// 	.DummyCycles = 0U,
++	// 	.DQSMode = HAL_OSPI_DQS_DISABLE,
++	// 	.SIOOMode = HAL_OSPI_SIOO_INST_EVERY_CMD,
++
++	// 	.NbData = 4,
++
++	// };
++
++	ret = HAL_OSPI_Command(&hospi1, &cmd, 0xFFFF);
++	if (ret) {
++		printk("QSPI COMMAND %d, error code %d\n", ret, hospi1.ErrorCode);
++	}
++
++	ret = HAL_OSPI_Transmit(&hospi1, &reg_val, 0xFFFF); //method 1: CPU
++	// ret = HAL_OSPI_Transmit_DMA(&hospi1, (uint8_t *)&reg_val); //method 2: DMA
++	// ret = HAL_OSPI_Transmit_IT(&hospi1, &reg_val); //method 3: IT
++	if (ret) {
++		printk("QSPI TX %d, error code %d, data %d\n", ret, hospi1.ErrorCode, reg_val);
++	}
++
++	while (hospi1.State != HAL_OSPI_STATE_READY) {
++		k_msleep(10);
++	}
++
++	k_sem_give(&sem);
++}
++
++
++void stm32_qspi_write(uint32_t addr, uint8_t *buf, size_t size)
++{
++	k_sem_take(&sem, K_FOREVER);
++
++	// printk("QSPI Write addr: %x, len: %d\n", addr, size);
++	int ret;
++	static OSPI_RegularCmdTypeDef cmd;
++	// memset(&cmd, 0, sizeof(OSPI_RegularCmdTypeDef));
++
++#ifdef OP_ON_QSPI
++	cmd = (OSPI_RegularCmdTypeDef){
++
++		.OperationType = HAL_OSPI_OPTYPE_COMMON_CFG,
++		.FlashId = HAL_OSPI_FLASH_ID_1,
++
++
++		.Instruction = 0x38,
++		.InstructionSize = HAL_OSPI_INSTRUCTION_8_BITS,
++		.InstructionMode =HAL_OSPI_INSTRUCTION_1_LINE,
++
++		.Address = (addr + 0x800000U),
++		.AddressMode = HAL_OSPI_ADDRESS_4_LINES,
++		.AddressSize = HAL_OSPI_ADDRESS_24_BITS,
++
++		.AlternateBytesMode = HAL_OSPI_ALTERNATE_BYTES_NONE,
++		.DummyCycles = 0U,
++
++		.DataMode = HAL_OSPI_DATA_4_LINES,
++
++		.DQSMode = HAL_OSPI_DQS_DISABLE,
++		.SIOOMode = HAL_OSPI_SIOO_INST_EVERY_CMD,
++
++		.NbData = size,
++
++	};
++#else
++	cmd = (OSPI_RegularCmdTypeDef){
++
++		.OperationType = HAL_OSPI_OPTYPE_COMMON_CFG,
++		.FlashId = HAL_OSPI_FLASH_ID_1,
++
++
++		.Instruction = 0x02,
++		.InstructionSize = HAL_OSPI_INSTRUCTION_8_BITS,
++		.InstructionMode =HAL_OSPI_INSTRUCTION_1_LINE,
++
++		.Address = (addr | 0x800000),
++		.AddressMode = HAL_OSPI_ADDRESS_1_LINE,
++		.AddressSize = HAL_OSPI_ADDRESS_24_BITS,
++
++		.AlternateBytesMode = HAL_OSPI_ALTERNATE_BYTES_NONE,
++		.DummyCycles = 0U,
++
++		.DataMode = HAL_OSPI_DATA_1_LINE,
++
++		.DQSMode = HAL_OSPI_DQS_DISABLE,
++		.SIOOMode = HAL_OSPI_SIOO_INST_EVERY_CMD,
++
++		.NbData = size,
++
++	};
++#endif
++
++
++
++	ret = HAL_OSPI_Command(&hospi1, &cmd, 0xFFFF);
++	if (ret) {
++		printk("QSPI COMMAND %d, error code %d\n", ret, hospi1.ErrorCode);
++	}
++
++	// ret = HAL_OSPI_Transmit_IT(&hospi1, buf);
++	ret = HAL_OSPI_Transmit_DMA(&hospi1, buf);
++	// ret = HAL_OSPI_Transmit(&hospi1, buf, 0xFFFF);
++	if (ret) {
++		printk("QSPI TX %d, error code %d\n", ret, hospi1.ErrorCode);
++	}
++
++	k_sem_take(&sync, K_FOREVER);
++
++	k_sem_give(&sem);
++}
++
++void stm32_qspi_read(uint32_t addr, uint8_t *buf, size_t size)
++{
++	k_sem_take(&sem, K_FOREVER);
++
++	// printk("QSPI Read addr: %x, len: %d\n", addr, size);
++	int ret;
++	OSPI_RegularCmdTypeDef cmd;
++	memset(&cmd, 0, sizeof(OSPI_RegularCmdTypeDef));
++
++#ifdef OP_ON_QSPI
++	cmd = (OSPI_RegularCmdTypeDef){
++
++		.OperationType = HAL_OSPI_OPTYPE_COMMON_CFG,
++		.FlashId = HAL_OSPI_FLASH_ID_1,
++
++
++		.Instruction = 0xEB,
++		.InstructionSize = HAL_OSPI_INSTRUCTION_8_BITS,
++		.InstructionMode =HAL_OSPI_INSTRUCTION_1_LINE,
++
++		.Address = (addr + 0x800000),
++		.AddressMode = HAL_OSPI_ADDRESS_4_LINES,
++		.AddressSize = HAL_OSPI_ADDRESS_24_BITS,
++
++		.AlternateBytesMode = HAL_OSPI_ALTERNATE_BYTES_NONE,
++
++		.DummyCycles = 10U,
++
++		.DataMode = HAL_OSPI_DATA_4_LINES,
++
++		.DQSMode = HAL_OSPI_DQS_DISABLE,
++		.SIOOMode = HAL_OSPI_SIOO_INST_EVERY_CMD,
++
++		.NbData = size,
++
++	};
++#else
++	cmd = (OSPI_RegularCmdTypeDef){
++
++		.OperationType = HAL_OSPI_OPTYPE_COMMON_CFG,
++		.FlashId = HAL_OSPI_FLASH_ID_1,
++
++
++		.Instruction = 0x0B,
++		.InstructionSize = HAL_OSPI_INSTRUCTION_8_BITS,
++		.InstructionMode =HAL_OSPI_INSTRUCTION_1_LINE,
++
++		.Address = (addr | 0x800000),
++		.AddressMode = HAL_OSPI_ADDRESS_1_LINE,
++		.AddressSize = HAL_OSPI_ADDRESS_24_BITS,
++
++		.AlternateBytes = 0x0,
++		.AlternateBytesSize = HAL_OSPI_ALTERNATE_BYTES_8_BITS,
++		.AlternateBytesMode = HAL_OSPI_ALTERNATE_BYTES_1_LINE,
++
++		.DummyCycles = 0U,
++
++		.DataMode = HAL_OSPI_DATA_1_LINE,
++
++		.DQSMode = HAL_OSPI_DQS_DISABLE,
++		.SIOOMode = HAL_OSPI_SIOO_INST_EVERY_CMD,
++
++		.NbData = size,
++
++	};
++#endif
++
++
++	ret = HAL_OSPI_Command(&hospi1, &cmd, 0xFFFF);
++
++	if (ret) {
++		printk("QSPI COMMAND %d, error code %d\n", ret, hospi1.ErrorCode);
++	}
++
++	// ret = HAL_OSPI_Receive_IT(&hospi1, buf);
++	ret = HAL_OSPI_Receive_DMA(&hospi1, buf);
++	// ret = HAL_OSPI_Receive(&hospi1, buf, 0xFFFF);
++	if (ret) {
++		printk("QSPI RX %d, error code %d\n", ret, hospi1.ErrorCode);
++	}
++
++	k_sem_take(&sync, K_FOREVER);
++
++	k_sem_give(&sem);
++}
++
++static void qspi_read_hl_w(uint32_t addr, uint8_t *buf)
++{
++	k_sem_take(&sem, K_FOREVER);
++	int ret;
++	int extra_words = 2;
++	uint8_t buf_tmp[100];
++	OSPI_RegularCmdTypeDef cmd;
++	memset(&cmd, 0, sizeof(OSPI_RegularCmdTypeDef));
++
++#ifdef OP_ON_QSPI
++	cmd = (OSPI_RegularCmdTypeDef){
++
++		.OperationType = HAL_OSPI_OPTYPE_COMMON_CFG,
++		.FlashId = HAL_OSPI_FLASH_ID_1,
++
++
++		.Instruction = 0xEB,
++		.InstructionSize = HAL_OSPI_INSTRUCTION_8_BITS,
++		.InstructionMode =HAL_OSPI_INSTRUCTION_1_LINE,
++
++		.Address = addr,
++		.AddressMode = HAL_OSPI_ADDRESS_4_LINES,
++		.AddressSize = HAL_OSPI_ADDRESS_24_BITS,
++
++		.AlternateBytesMode = HAL_OSPI_ALTERNATE_BYTES_NONE,
++
++		.DummyCycles = 10U,
++
++		.DataMode = HAL_OSPI_DATA_4_LINES,
++
++		.DQSMode = HAL_OSPI_DQS_DISABLE,
++		.SIOOMode = HAL_OSPI_SIOO_INST_EVERY_CMD,
++
++		.NbData = 4 + 4 * extra_words,
++
++	};
++#else
++	cmd = (OSPI_RegularCmdTypeDef){
++
++		.OperationType = HAL_OSPI_OPTYPE_COMMON_CFG,
++		.FlashId = HAL_OSPI_FLASH_ID_1,
++
++
++		.Instruction = 0x0B,
++		.InstructionSize = HAL_OSPI_INSTRUCTION_8_BITS,
++		.InstructionMode =HAL_OSPI_INSTRUCTION_1_LINE,
++
++		.Address = addr,
++		.AddressMode = HAL_OSPI_ADDRESS_1_LINE,
++		.AddressSize = HAL_OSPI_ADDRESS_24_BITS,
++
++		.AlternateBytesMode = HAL_OSPI_ALTERNATE_BYTES_NONE,
++
++		.DummyCycles = 8U,
++
++		.DataMode = HAL_OSPI_DATA_1_LINE,
++
++		.DQSMode = HAL_OSPI_DQS_DISABLE,
++		.SIOOMode = HAL_OSPI_SIOO_INST_EVERY_CMD,
++
++		.NbData = 4 + 4 * extra_words,
++
++	};
++#endif
++
++
++
++	ret = HAL_OSPI_Command(&hospi1, &cmd, 0xFFFF);
++	if (ret) {
++		printk("QSPI COMMAND %d, error code %d\n", ret, hospi1.ErrorCode);
++	}
++
++	// ret = HAL_OSPI_Receive_IT(&hospi1, buf_tmp);
++	ret = HAL_OSPI_Receive_DMA(&hospi1, buf_tmp);
++	// ret = HAL_OSPI_Receive(&hospi1, buf, 0xFFFF);
++	if (ret) {
++		printk("QSPI RX %d, error code %d\n", ret, hospi1.ErrorCode);
++	}
++
++	k_sem_take(&sync, K_FOREVER);
++
++	memcpy(buf, &(buf_tmp[4 * extra_words]), 4);
++	k_sem_give(&sem);
++
++}
++void stm32_qspi_read_hl(uint32_t addr, uint8_t *buf, size_t size)
++{
++	// printk("QSPI HL Read addr: %x, len: %d\n", addr, size);
++	int count = 0;
++	while (count < (size / 4)) {
++		qspi_read_hl_w(addr + (4 * count), ((char *)buf + (4 * count)));
++		count++;
++	}
++}
++
++
+diff --git a/drivers/wifi/nrf700x/src/stm32_qspi.h b/drivers/wifi/nrf700x/src/stm32_qspi.h
+new file mode 100644
+index 000000000..08e6a8db4
+--- /dev/null
++++ b/drivers/wifi/nrf700x/src/stm32_qspi.h
+@@ -0,0 +1,12 @@
++#ifndef _STM32_QSPI_H
++#define _STM32_QSPI_H
++#include <zephyr/types.h>
++#include <zephyr/drivers/gpio.h>
++
++void stm32_qspi_read(uint32_t addr, uint8_t *buf, size_t size);
++
++void stm32_qspi_read_hl(uint32_t addr, uint8_t *buf, size_t size);
++void stm32_qspi_write(uint32_t addr, uint8_t *buf, size_t size);
++void stm32_qspi_init(void);
++void stm32_qspi_add_isr(struct gpio_callback *irq_callback_data, void (*irq_handler)());
++#endif /* _STM32QSPI_H */
+\ No newline at end of file
+diff --git a/west.yml b/west.yml
+index 3b61d4e66..82a29f986 100644
+--- a/west.yml
++++ b/west.yml
+@@ -83,6 +83,7 @@ manifest:
+           - fatfs
+           - hal_nordic
+           - hal_st # required for ST sensors (unrelated to STM32 MCUs)
++          - hal_stm32
+           - hal_wurthelektronik
+           - liblc3
+           - libmetal
+-- 
+2.37.3.windows.1
+
