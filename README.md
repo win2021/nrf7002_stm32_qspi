@@ -42,9 +42,9 @@ shell.zip - modified shell project to enable STM32 as host
 
 3. Run **west update** to pull STM32 HAL.
 
-4. Build shell example. If you are using nRF connect VS code extension, it should detect the build configuration from **build** folder. Otherwise, manually select **dts32.overlay** and **prj.conf**.
+4. Build shell example. If you are using nRF connect VS code extension, it should detect the build configuration from **build** folder automatically. Otherwise, manually select **dts32.overlay** and **prj.conf**.
 
-5. In console, use shell command to lunach zperf test.
+5. In console, use shell command to launch zperf test.
 
 ## Known issues
 1. The configuration is optimized for UDP TX. Other test cases may yield poor performance.
