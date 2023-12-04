@@ -4,12 +4,12 @@ The repo hosts resources for running nRF7002 on STM32 platform.
 
 ## Contents
 ### HW
-SCH_Schematic1_2023-11-27.pdf - The schematic of adaptor
+Schematic.pdf - The schematic of adaptor
 
-Gerber_PCB1_2023-10-26.zip - Gerber file of adaptor PCB
+Gerber.zip - Gerber file of adaptor PCB
 
 ### SW 
-0001-qspi.patch - patch file to add STM32 QSPI driver
+qspi.patch - patch file to add STM32 QSPI driver
 
 shell.zip - modified shell project to enable STM32 as host
 
