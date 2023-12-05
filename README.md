@@ -49,4 +49,4 @@ shell.zip - modified shell project to enable STM32 as host
 ## Limitations and Known Issues
 1. The configuration is optimized for UDP TX. Other test cases may yield poor performance. You may adjust the configuration to meet particular application scenario.
 
-2. APIs for low power operation are not implemented. So you cannot enter low power mode. This must be configurated as CONFIG_NRF700X_QSPI_LOW_POWER=n and CONFIG_NRF_WIFI_LOW_POWER=n, otherwise the boot would fail.
+2. APIs for low power operation are not implemented. So you cannot enter low power mode. This must be ensured by adding CONFIG_NRF700X_QSPI_LOW_POWER=n and CONFIG_NRF_WIFI_LOW_POWER=n, otherwise the boot would fail.
