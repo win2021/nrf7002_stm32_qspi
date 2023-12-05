@@ -38,7 +38,7 @@ shell.zip - modified shell project to enable STM32 as host
 
      Other pins of nRF7002EK are floating.
 
-2. Apply patch to nrf@e4f142f2a19df51b9ae9ff0c32c6a196ced6b25b.
+2. Apply patch to sdk-nrf@e4f142f2a19df51b9ae9ff0c32c6a196ced6b25b.
 
 3. Run **west update** to pull STM32 HAL.
 
