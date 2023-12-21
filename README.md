@@ -50,3 +50,27 @@ shell.zip - modified shell project to enable STM32 as host
 1. The configuration is optimized for UDP TX. Other test cases may yield poor performance. You may adjust the configuration to meet particular application scenario.
 
 2. APIs for low power operation are not implemented. So you cannot enter low power mode. This must be ensured by adding CONFIG_NRF700X_QSPI_LOW_POWER=n and CONFIG_NRF_WIFI_LOW_POWER=n, otherwise the boot would fail.
+
+
+
+## bese on STM32H7BI dk, pin config
+
+ nRF7002-EK < ---------------> STM32H7B Board
+   
+   CLK        < ---------------> CN10, Pin1 (PF10)
+   
+   CS         < ---------------> CN6, Pin5 (PB6)
+   
+   IO0        < ---------------> CN11, Pin3 (PI9)
+   
+   IO1        < ---------------> CN11, Pin8 (PI10)
+   
+   IO2        < ---------------> CN11, Pin5 (PE2)
+   
+   IO3        < ---------------> CN20, Pin4 (PA1_c)
+   
+   BUCKEN     < ---------------> CN10, Pin5 (PB14)
+   
+   IOVDD      < ---------------> CN10, Pin9 (PD13)
+   
+   IRQ        < ---------------> CN10, Pin10  (PD12)

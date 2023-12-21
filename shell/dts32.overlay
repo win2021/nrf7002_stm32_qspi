@@ -1,0 +1,55 @@
+#include <st/h7/stm32h7b3lihxq-pinctrl.dtsi>
+
+/delete-node/ &sram1;
+/delete-node/ &sram2;
+&sram0 {
+	compatible = "zephyr,memory-region", "mmio-sram";
+	reg = < 0x24000000 DT_SIZE_K(1024) >;
+	zephyr,memory-region = "SRAM0";
+	zephyr,memory-attr = "RAM_NOCACHE";
+};
+
+/{
+	chosen {
+		/delete-property/ zephyr,dtcm;
+		/delete-property/ zephyr,itcm;
+	};
+
+};
+
+&fmc {
+	status = "disabled";
+};
+
+&sdmmc1 {
+	status = "disabled";
+};
+
+&ltdc {
+	status = "disabled";
+};
+
+&spi2 {
+	status = "disabled";
+};
+
+&octospi1 {
+	pinctrl-0 = <&octospim_p1_clk_pf10 &octospim_p1_ncs_pb6
+		     &octospim_p2_io0_pi9 &octospim_p2_io1_pi10
+		     &octospim_p1_io2_pe2 &octospim_p1_io3_pa1_c
+		     &octospim_p1_io4_pc1 &octospim_p1_io5_ph3
+		     &octospim_p1_io6_pg9 &octospim_p1_io7_pd7
+		     &octospim_p1_dqs_pc5>;
+	pinctrl-names = "default";
+
+	status = "okay";	
+};
+
+// &pll {
+// 	mul-n = <30>;
+
+// };
+
+// &rcc {
+// 	clock-frequency = <DT_FREQ_M(240)>;
+// };

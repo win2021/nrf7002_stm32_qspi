@@ -1,0 +1,17 @@
+#
+# Copyright (c) 2023 Nordic Semiconductor
+#
+# SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+#
+
+source "Kconfig.zephyr"
+
+menu "Nordic Scan sample"
+
+config APP_ENABLE_QSPI
+	bool "select qspi driver"
+	select USE_STM32_HAL_OSPI
+	select USE_STM32_HAL_GPIO
+	select USE_STM32_HAL_MDMA
+
+endmenu

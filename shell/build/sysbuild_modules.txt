@@ -1,0 +1,1 @@
+"nrf":"D:/ncs/gitbranch/nrf":"D:/ncs/gitbranch/nrf/sysbuild"

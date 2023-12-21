@@ -1,0 +1,6 @@
+{
+	"files.associations": {
+		"kernel.h": "c",
+		"net_tc_mapping.h": "c"
+	}
+}
